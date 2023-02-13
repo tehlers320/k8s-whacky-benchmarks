@@ -14,6 +14,7 @@ import (
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	fc "github.com/tehlers320/k8s-whacky-benchmarks/fortio"
 	"k8s.io/client-go/kubernetes"
+	corev1 "k8s.io/api/core/v1"
 	"github.com/cenkalti/backoff/v4"
 )
 
@@ -30,11 +31,16 @@ type k8s struct {
 	currMemLm *resource.Quantity
 	currCpuRq *resource.Quantity
 	currCpuLm *resource.Quantity
+	startResource *corev1.ResourceRequirements
 	deployStateHealthy bool
 }
 
-func NewK8sClient(client *kubernetes.Clientset) *k8s{
-	return &k8s{k8sClient: client}
+func NewK8sClient(client *kubernetes.Clientset, deploymentName string, namespace string ) *k8s{
+	return &k8s{
+		k8sClient: client,
+		namespace: namespace,
+		deploymentName: deploymentName,
+	}
 
 }
 
@@ -51,6 +57,7 @@ func (k *k8s)StartTests()  {
 	}
 	k.runNumber = 0
 	k.runsWithoutImprovement = 0
+	k.startResource = k.getResources()
 	k.verticallyScale()
 	for {
 		if k.deployError {
@@ -77,6 +84,11 @@ func (k *k8s)StartTests()  {
 					k.deployError = true
 				}
 			}
+		}
+		if k.deployError {
+			log.Errorf("Failed to set CPU: %d , Mem: %d halting", k.currCpuRq, k.currMemRq)
+			k.resetResources()
+			break
 		}
 		k.runNumber += 1
 		if k.runNumber >= viper.GetInt("fortio.repeattest") {
@@ -109,14 +121,17 @@ func runFortio() *fc.RunResponse{
 
 func (k *k8s)fixmemoryCrash()  {
 	MemoryIncrease := *resource.NewQuantity(viper.GetInt64("test.memory.increaseamount"), resource.BinarySI)
-	k.currMemRq.Add(MemoryIncrease)
-	k.currMemLm.Add(MemoryIncrease)
 	d, err := k.k8sClient.AppsV1().
 	Deployments(k.namespace).
 	Get(context.TODO(), k.deploymentName, v1.GetOptions{})
 	if err != nil {
 		log.Fatal(err)
 	}
+	k.currMemRq = d.Spec.Template.Spec.Containers[0].Resources.Requests.Memory()
+	k.currMemLm = d.Spec.Template.Spec.Containers[0].Resources.Limits.Memory()
+	k.currMemRq.Add(MemoryIncrease)
+	k.currMemLm.Add(MemoryIncrease)
+
 	d.Spec.Template.Spec.Containers[0].Resources.Limits["memory"] = *k.currMemRq
 	d.Spec.Template.Spec.Containers[0].Resources.Requests["memory"] = *k.currMemLm
 
@@ -132,18 +147,48 @@ func (k *k8s)fixmemoryCrash()  {
 		log.Fatal(err)
 	}
 
-	if !k.checkDeploymentState() {
-		t := time.Now()
-		if !k.backoffOnDeploy(t) {
-			k.deployError = true
-		}
+}
+
+func (k *k8s)getResources() *corev1.ResourceRequirements {
+
+	d, err := k.k8sClient.AppsV1().
+	Deployments(k.namespace).
+	Get(context.TODO(), k.deploymentName, v1.GetOptions{})
+	if err != nil {
+		log.Fatal(err)
 	}
+
+	return &d.Spec.Template.Spec.Containers[0].Resources
+}
+
+func (k *k8s)resetResources(){
+	log.Infof("resetting app to the way it was prior to starting")
+	d, err := k.k8sClient.AppsV1().
+	Deployments(k.namespace).
+	Get(context.TODO(), k.deploymentName, v1.GetOptions{})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	d.Spec.Template.Spec.Containers[0].Resources = *k.startResource
+
+    _, err = k.k8sClient.AppsV1().
+        Deployments(k.namespace).
+        Update(
+			context.TODO(),
+			d,
+			v1.UpdateOptions{},
+		)
+    if err != nil {
+        log.Fatal(err)
+    }
+	
 
 }
 
 
 func (k *k8s)verticallyScale()  {
-	CpuIncrease := *resource.NewQuantity(viper.GetInt64("test.cpu.increaseammount"), resource.DecimalSI)
+	CpuIncrease := *resource.NewMilliQuantity(viper.GetInt64("test.cpu.increaseamount"), resource.BinarySI)
 	
 	d, err := k.k8sClient.AppsV1().
 	Deployments(k.namespace).
@@ -155,7 +200,7 @@ func (k *k8s)verticallyScale()  {
 	k.currCpuRq = d.Spec.Template.Spec.Containers[0].Resources.Requests.Cpu()
 	k.currCpuLm = d.Spec.Template.Spec.Containers[0].Resources.Limits.Cpu()
 	k.currCpuRq.Add(CpuIncrease)
-	k.currCpuRq.Add(CpuIncrease)
+	k.currCpuLm.Add(CpuIncrease)
 
 	d.Spec.Template.Spec.Containers[0].Resources.Limits["cpu"] = *k.currCpuLm
 	d.Spec.Template.Spec.Containers[0].Resources.Requests["cpu"] = *k.currCpuRq
@@ -171,25 +216,20 @@ func (k *k8s)verticallyScale()  {
         log.Fatal(err)
     }
 	
-	if !k.checkDeploymentState() {
-		t := time.Now()
-		k.backoffOnDeploy(t)
-	}
 	log.Infof("%s", &d)
 }
 
 func (k *k8s)backoffOnDeploy(t time.Time) bool{
 	ExpBackOff := config.NewExponentialBackOff()
+	log.Debugf("entering backoff retry for time: %v", t)
 	operation := func() bool {
-		log.Debugf("entering backoff retry for time: %v", t)
-
-		return !k.checkDeploymentState()
+		return k.checkDeploymentState()
 	}
 
 	ticker := backoff.NewTicker(ExpBackOff)
 
-	for _ = range ticker.C {
-		if ok := operation(); ok == false {
+	for range ticker.C {
+		if ok := operation(); !ok {
 			log.Warnf("will retry timestamp %v in ... %v", t, ExpBackOff.NextBackOff())
 			continue
 		}
@@ -198,7 +238,7 @@ func (k *k8s)backoffOnDeploy(t time.Time) bool{
 		break
 	}
 
-	return true
+	return time.Since(t) < ExpBackOff.MaxElapsedTime
 }
 
 func (k *k8s)checkDeploymentState() bool {
@@ -211,16 +251,16 @@ func (k *k8s)checkDeploymentState() bool {
 
 	if d != nil &&
 		d.Spec.Replicas != nil &&
-		*d.Spec.Replicas == d.Status.ReadyReplicas {
+		d.Status.Replicas == d.Status.ReadyReplicas {
 		log.Info("Deployment is READY")
 		k.deployStateHealthy = true
 		return true
 	} else {
 		log.Infof("Deployment is NOT READY, count: %d", *d.Spec.Replicas)
 		k.deployStateHealthy = false
+		return false
 	}
-	k.deployStateHealthy = true
-	return false
+
 }
 
 func (k *k8s)scaleUpDeployment()  {

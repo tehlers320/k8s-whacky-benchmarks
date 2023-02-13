@@ -62,7 +62,7 @@ type RunResponse struct {
 		Max    float64 `json:"Max,omitempty"`
 		Sum    float64 `json:"Sum,omitempty"`
 		Avg    float64 `json:"Avg,omitempty"`
-		StdDev int     `json:"StdDev,omitempty"`
+		StdDev float64 `json:"StdDev,omitempty"`
 		Data   []struct {
 			Start   float64 `json:"Start,omitempty"`
 			End     float64 `json:"End,omitempty"`

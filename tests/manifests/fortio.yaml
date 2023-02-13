@@ -1,0 +1,104 @@
+--- 
+apiVersion: v1
+kind: Service
+metadata:
+  name: fortioserver
+spec:
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+  - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+  - name: http-echo
+    port: 8080
+    protocol: TCP
+    targetPort: 8080
+  - name: grpc-ping
+    port: 8079
+    protocol: TCP
+    targetPort: 8079
+  - name: http-echoa
+    port: 8077
+    protocol: TCP
+    targetPort: 8077
+  - name: grpc-pinga
+    port: 8076
+    protocol: TCP
+    targetPort: 8076
+  selector:
+    app: fortioserver
+  sessionAffinity: None
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fortioserver
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: fortioserver
+  name: fortioserver
+spec:
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: fortioserver
+  template:
+    metadata:
+      labels:
+        app: fortioserver
+    spec:
+      containers:
+      - image: fortio/fortio:1.40.1
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          failureThreshold: 3
+          initialDelaySeconds: 15
+          periodSeconds: 20
+          successThreshold: 1
+          tcpSocket:
+            port: 8080
+          timeoutSeconds: 1
+        name: captured
+        ports:
+        - containerPort: 8080
+          protocol: TCP
+        - containerPort: 8079
+          protocol: TCP
+        - containerPort: 8077
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 3
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          successThreshold: 1
+          tcpSocket:
+            port: 8080
+          timeoutSeconds: 1
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "100Mi"
+          limits:
+            cpu: "100m"
+            memory: "100Mi"
+        securityContext:
+          runAsUser: 1
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /var/lib/fortio
+          name: shared-data
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      serviceAccount: fortioserver
+      serviceAccountName: fortioserver
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - emptyDir: {}
+        name: shared-data

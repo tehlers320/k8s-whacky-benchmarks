@@ -8,6 +8,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 
 	config "github.com/tehlers320/k8s-whacky-benchmarks/config"
 	fc "github.com/tehlers320/k8s-whacky-benchmarks/fortio"
@@ -57,7 +58,7 @@ func Execute() {
 	}
 	k8s := config.K8s{Local: true}
 	k8sClient, err := k8s.CreateClient()
-	kClient := kates.NewK8sClient(k8sClient) 
+	kClient := kates.NewK8sClient(k8sClient, viper.GetString("test.deployment.name"), viper.GetString("test.deployment.namespace"))
 	kClient.StartTests()
 	if err != nil {
 		log.Error(err, "unable to start k8s client")

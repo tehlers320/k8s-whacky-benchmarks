@@ -40,6 +40,9 @@ kind-delete: kind-context
 kind-metal: kind-context
 kind-load-image: docker-build
 	kind load docker-image $(IMAGE_NAME):$(GIT_COMMIT) --name ${KIND_CLUSTER_NAME}
+kind-fortio: kind-context
+	-kubectl create ns fortio
+	kubectl -n fortio apply -f tests/manifests/fortio.yaml
 ######## KIND SECTION ########
 
 build:

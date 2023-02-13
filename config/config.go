@@ -22,17 +22,21 @@ var (
 	defaultConfig = []byte(`
 logging.level: "info"
 test:
+  deployment: 
+    namespace: fortio
+    name: fortioserver
   verticalScaleIncrease: 1
   delayBetweenTests: "5m"
   cpu:
     increaseAmount: 100
-    max: 100000
+    max: 96000
   memory:
-    increaseAmount: 1024
-    max: 90000
+    # 100m 104857600
+    increaseAmount: 104857600
+    max: 104857600000
 fortio:
   url: "http://localhost:8080/fortio/"
-  duration: 60s
+  duration: 10s
   repeattest: 3
   runsWithoutImprovement: 10
 tests_to_run_from_configmaps:
@@ -94,8 +98,8 @@ func NewExponentialBackOff() *backoff.ExponentialBackOff {
 	b := backoff.NewExponentialBackOff()
 	b.InitialInterval = 10 * time.Second
 	b.Multiplier = 1.0
-	b.MaxInterval = 360 * time.Second
-	b.MaxElapsedTime = time.Minute * 60
+	b.MaxInterval = 60 * time.Second
+	b.MaxElapsedTime = time.Minute * 1
 	b.Reset()
 	return b
 }
